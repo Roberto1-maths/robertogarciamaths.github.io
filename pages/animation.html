@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualización de Vectores Propios</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+        }
+        h2 { margin-top: 0; }
+        .container {
+            display: flex;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            width: 250px;
+        }
+        .matrix-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+            background: #eef2f5;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .matrix-grid input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 16px;
+        }
+        .info-panel {
+            background: #eef2f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 15px;
+        }
+        .info-panel div { margin-bottom: 8px; }
+        .eigen-alert {
+            display: none;
+            background: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #c3e6cb;
+            font-weight: bold;
+            text-align: center;
+        }
+        canvas {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #ffffff;
+            cursor: crosshair;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+        }
+        .legend {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .color-box { width: 15px; height: 15px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <h2>Transformaciones Lineales y Vectores Propios</h2>
+    
+    <div class="container">
+        <div class="controls">
+            <h3>Matriz A</h3>
+            <div class="matrix-grid">
+                <input type="number" id="a11" value="2" step="0.5">
+                <input type="number" id="a12" value="1" step="0.5">
+                <input type="number" id="a21" value="1" step="0.5">
+                <input type="number" id="a22" value="2" step="0.5">
+            </div>
+
+            <div class="info-panel">
+                <div><strong>Vector v:</strong> [<span id="v-val">1.00, 1.00</span>]</div>
+                <div><strong>Vector Av:</strong> [<span id="av-val">3.00, 3.00</span>]</div>
+            </div>
+
+            <div id="eigen-alert" class="eigen-alert">
+                ¡Vector propio encontrado!<br>
+                λ ≈ <span id="lambda-val">0.00</span>
+            </div>
+
+            <div class="legend">
+                <div class="legend-item"><div class="color-box" style="background: #007bff;"></div> Vector v</div>
+                <div class="legend-item"><div class="color-box" style="background: #dc3545;"></div> Vector Av</div>
+            </div>
+            <p style="font-size: 13px; color: #666; margin-top: 20px;">
+                Arrastra la punta del vector azul en el plano para explorar.
+            </p>
+        </div>
+
+        <canvas id="simCanvas" width="500" height="500"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        // Rango de coordenadas cartesianas (-10 a 10)
+        const range = 10; 
+        const scale = width / (range * 2);
+
+        // Estado inicial del vector v
+        let vx = 1;
+        let vy = 1;
+        let isDragging = false;
+
+        // Elementos del DOM
+        const inputs = {
+            a11: document.getElementById('a11'),
+            a12: document.getElementById('a12'),
+            a21: document.getElementById('a21'),
+            a22: document.getElementById('a22')
+        };
+        const elV = document.getElementById('v-val');
+        const elAv = document.getElementById('av-val');
+        const elAlert = document.getElementById('eigen-alert');
+        const elLambda = document.getElementById('lambda-val');
+
+        // Escuchar cambios en la matriz
+        Object.values(inputs).forEach(input => {
+            input.addEventListener('input', draw);
+        });
+
+        // Funciones de conversión de coordenadas
+        function mathToScreen(x, y) {
+            return {
+                cx: width / 2 + x * scale,
+                cy: height / 2 - y * scale
+            };
+        }
+
+        function screenToMath(cx, cy) {
+            return {
+                x: (cx - width / 2) / scale,
+                y: -(cy - height / 2) / scale
+            };
+        }
+
+        // Eventos del ratón para interacción
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            updateVectorFromMouse(e);
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                updateVectorFromMouse(e);
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        function updateVectorFromMouse(e) {
+            const rect = canvas.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            const mathCoords = screenToMath(cx, cy);
+            
+            // Limitar al rango visible
+            vx = Math.max(-range, Math.min(range, mathCoords.x));
+            vy = Math.max(-range, Math.min(range, mathCoords.y));
+            
+            // Evitar el vector nulo exacto
+            if (Math.abs(vx) < 0.1 && Math.abs(vy) < 0.1) {
+                vx = 0.1; vy = 0.1;
+            }
+            draw();
+        }
+
+        function drawArrow(fromX, fromY, toX, toY, color, lineWidth = 2) {
+            const headlen = 12; // Longitud de la punta
+            const dx = toX - fromX;
+            const dy = toY - fromY;
+            const angle = Math.atan2(dy, dx);
+            
+            ctx.beginPath();
+            ctx.moveTo(fromX, fromY);
+            ctx.lineTo(toX, toY);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(toX, toY);
+            ctx.lineTo(toX - headlen * Math.cos(angle - Math.PI / 6), toY - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(toX - headlen * Math.cos(angle + Math.PI / 6), toY - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(toX, toY);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        function drawAxes() {
+            ctx.beginPath();
+            ctx.moveTo(0, height / 2);
+            ctx.lineTo(width, height / 2);
+            ctx.moveTo(width / 2, 0);
+            ctx.lineTo(width / 2, height);
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Dibujar marcas (ticks)
+            ctx.fillStyle = '#999';
+            ctx.font = '10px Arial';
+            for (let i = -range; i <= range; i++) {
+                if (i === 0) continue;
+                let pos = mathToScreen(i, 0);
+                ctx.fillRect(pos.cx, pos.cy - 3, 1, 6);
+                ctx.fillText(i, pos.cx - 5, pos.cy + 15);
+                
+                pos = mathToScreen(0, i);
+                ctx.fillRect(pos.cx - 3, pos.cy, 6, 1);
+                ctx.fillText(i, pos.cx + 8, pos.cy + 4);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            drawAxes();
+
+            // Leer matriz A
+            const a11 = parseFloat(inputs.a11.value) || 0;
+            const a12 = parseFloat(inputs.a12.value) || 0;
+            const a21 = parseFloat(inputs.a21.value) || 0;
+            const a22 = parseFloat(inputs.a22.value) || 0;
+
+            // Calcular Av
+            const avx = a11 * vx + a12 * vy;
+            const avy = a21 * vx + a22 * vy;
+
+            // Actualizar panel de información
+            elV.textContent = `${vx.toFixed(2)}, ${vy.toFixed(2)}`;
+            elAv.textContent = `${avx.toFixed(2)}, ${avy.toFixed(2)}`;
+
+            const origin = mathToScreen(0, 0);
+            const vScreen = mathToScreen(vx, vy);
+            const avScreen = mathToScreen(avx, avy);
+
+            // Determinar si son colineales (Determinante cercano a 0)
+            const det = vx * avy - vy * avx;
+            const dotProduct = vx * avx + vy * avy;
+            const normV2 = vx * vx + vy * vy;
+            
+            // Tolerancia para la "captura" visual del vector propio
+            const epsilon = 0.5; 
+            let isEigen = Math.abs(det) < epsilon && normV2 > 0.1;
+
+            if (isEigen) {
+                // Resaltar fondo ligeramente
+                ctx.fillStyle = 'rgba(40, 167, 69, 0.05)';
+                ctx.fillRect(0, 0, width, height);
+                
+                elAlert.style.display = 'block';
+                // Calcular lambda usando la proyección: (Av · v) / (v · v)
+                const lambda = dotProduct / normV2;
+                elLambda.textContent = lambda.toFixed(2);
+            } else {
+                elAlert.style.display = 'none';
+            }
+
+            // Dibujar vectores
+            drawArrow(origin.cx, origin.cy, avScreen.cx, avScreen.cy, '#dc3545', 2); // Rojo para Av
+            drawArrow(origin.cx, origin.cy, vScreen.cx, vScreen.cy, '#007bff', 3); // Azul para v
+            
+            // Dibujar un pequeño círculo en la punta de v para indicar que es arrastrable
+            ctx.beginPath();
+            ctx.arc(vScreen.cx, vScreen.cy, 6, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 123, 255, 0.5)';
+            ctx.fill();
+            ctx.strokeStyle = '#007bff';
+            ctx.stroke();
+        }
+
+        // Inicializar
+        draw();
+    </script>
+</body>
+</html>
